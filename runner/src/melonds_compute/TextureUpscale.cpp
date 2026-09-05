@@ -334,6 +334,16 @@ bool nds_texture_upscale_dispatch(uint32_t dst_array, uint32_t width,
     // The cache's very next action can be a sample from this array.
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT |
                     GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    // One-time on-device diagnosis: report whether the first dispatch made it
+    // through the GL without error (silent per-texture failure otherwise).
+    static bool s_reported = false;
+    if (!s_reported) {
+        s_reported = true;
+        const GLenum err = glGetError();
+        std::fprintf(stderr, "[texup] first dispatch: %s (0x%04X) %ux%u->%ux%u\n",
+                     err == GL_NO_ERROR ? "OK" : "GL ERROR", err,
+                     width, height, out_w, out_h);
+    }
 
     glUseProgram(static_cast<GLuint>(prev_program));
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prev_tex2d));

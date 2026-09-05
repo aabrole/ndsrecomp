@@ -1555,6 +1555,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
         nds_set_touch(relative_mouse.x(), relative_mouse.y(), true);
         std::fprintf(stderr, "[sdl] relative mouse captured\n");
     };
+#if defined(__ANDROID__)
+    // Handhelds have no pointer to click with: engage the Prime-controls
+    // capture immediately instead of waiting for the desktop "click game
+    // screen to capture" gesture. Without this, sticks/buttons run the plain
+    // fallback mapping until the player happens to tap the top screen.
+    capture_relative_mouse();
+#endif
     uint64_t shown_frames = 0;
     uint64_t synthetic_presents = 0;
     FrameBlendCache blend_cache{};
