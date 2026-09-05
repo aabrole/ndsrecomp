@@ -472,7 +472,15 @@ MphPrimeBindingSet make_mph_prime_bindings(
 constexpr int kWindowScale = 2;
 constexpr uint64_t kSystemCyclesPerFrame = 2130ull * 263ull;
 constexpr int kAudioFrequency = 33513982 / 1024;
+#if defined(__ANDROID__)
+// Thor: double the steady-state runway (~125 ms). Android's audio HAL adds
+// its own jitter and the emulation thread shares big cores with the GL
+// presenter; 63 ms starved on every frame hitch and each starvation is an
+// audible crackle. Latency is audio-only and imperceptible for aiming.
+constexpr uint32_t kAudioQueueFrames = 4096;
+#else
 constexpr uint32_t kAudioQueueFrames = 2048;
+#endif
 // Playback starts only once kAudioStartFrames (~1.5 s) are queued. The cold
 // boot's frames ~5-131 emulate below real time with a measured cumulative
 // production deficit of up to ~1.15 s; prebuffering more than that rides the
@@ -509,8 +517,25 @@ void SDLCALL audio_callback(void* userdata, Uint8* stream, int len) {
                     (take - first) * kAudioFrameBytes);
     queue->read = (queue->read + take) % kAudioCapacityFrames;
     queue->count -= take;
-    if (take < requested && queue->started.load(std::memory_order_relaxed))
+    if (take < requested && queue->started.load(std::memory_order_relaxed)) {
         queue->underruns.fetch_add(1, std::memory_order_relaxed);
+        // Soft underrun: ramp the last delivered frame down to silence over
+        // up to 128 frames (~4 ms) instead of slamming to zero. The hard
+        // edge is what the ear hears as a click; a short fade turns a
+        // starvation into a brief dip. The remainder stays zero-filled.
+        if (take > 0u) {
+            const int16_t last_l = output[take * 2u - 2u];
+            const int16_t last_r = output[take * 2u - 1u];
+            const uint32_t ramp = std::min(128u, requested - take);
+            for (uint32_t i = 0; i < ramp; ++i) {
+                const int32_t scale = static_cast<int32_t>(ramp - i);
+                output[(take + i) * 2u] =
+                    static_cast<int16_t>((last_l * scale) / static_cast<int32_t>(ramp));
+                output[(take + i) * 2u + 1u] =
+                    static_cast<int16_t>((last_r * scale) / static_cast<int32_t>(ramp));
+            }
+        }
+    }
 }
 
 uint16_t key_bit(SDL_Scancode key) {
@@ -2431,6 +2456,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
             break;
         }
 #if defined(__ANDROID__)
+        // Debounced save flush (see io.cpp): write the cartridge save once
+        // the backup chip has been quiet for a moment, off the hot path.
+        nds_io_cartridge_save_maybe_flush();
         // Mirror the DS bottom screen onto the Thor's second physical display.
         // Skip when gl_top is active -- present_screens already blitted it
         // there in the compute path (avoids a double present).

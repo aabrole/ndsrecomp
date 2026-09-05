@@ -1,5 +1,7 @@
 #if defined(__ANDROID__)
 #include "android_second_screen.h"
+#include "coverage_manifest.h"
+#include "io.h"
 
 #include <jni.h>
 #include <android/native_window.h>
@@ -28,6 +30,15 @@ std::atomic<bool> g_stretch{false};
 std::atomic<int> g_canvas_w{256}, g_canvas_h{192};
 std::atomic<int> g_off_x{0}, g_off_y{0};
 }  // namespace
+
+// Called from MyGame.onPause: persist what a force-stop would lose — the
+// rotating coverage part (feeds bank promotion) and any dirty cartridge save.
+extern "C" JNIEXPORT void JNICALL
+Java_com_thor_mph_MyGame_nativeFlushDurableState(JNIEnv*, jclass) {
+    char error[256] = {};
+    coverage_manifest_flush_part(error, sizeof(error));
+    nds_io_flush_cartridge_save();
+}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_thor_mph_MyGame_nativeSetSecondScreenStretch(JNIEnv*, jclass,

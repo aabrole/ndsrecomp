@@ -330,5 +330,6 @@ void     nds_io_configure_cartridge_save(
 // Serve/batch gates leave this path empty unless explicitly requested.
 void     nds_io_set_cartridge_save_path(const char* path);
 bool     nds_io_flush_cartridge_save();
+void     nds_io_cartridge_save_maybe_flush();
 bool     nds_io_cartridge_save_snapshot(const uint8_t** data, uint32_t* size,
                                         bool* dirty);

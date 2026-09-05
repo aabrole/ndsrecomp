@@ -44,6 +44,7 @@
 // SDLActivity's nativeRunMain can dlsym it out of libmain.so.
 #include <SDL_main.h>
 #include <unistd.h>
+#include <sched.h>
 #include <pthread.h>
 #include <android/log.h>
 // Forward the runner's stdout/stderr into logcat (tag "ThorMPHrun") so its
@@ -321,6 +322,20 @@ void dump_replay_status() {
 int main(int argc, char** argv) {
 #if defined(__ANDROID__)
     android_redirect_stdio_to_logcat();
+    {
+        // Keep the emulation off the efficiency cores: this thread carries
+        // the whole recompiled CPU pipeline, and letting the scheduler park
+        // it on a little core shows up directly as frame dips. Restrict to
+        // the performance cluster (cpu3..cpu7 on the Thor's QCS8550; on
+        // other silicon an invalid mask simply fails and changes nothing).
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        for (int cpu = 3; cpu <= 7; ++cpu) CPU_SET(cpu, &mask);
+        if (sched_setaffinity(0, sizeof(mask), &mask) == 0)
+            std::fprintf(stderr, "[android] emu thread pinned to cpu3-7\n");
+        else
+            std::fprintf(stderr, "[android] cpu affinity not applied\n");
+    }
 #endif
     // Wiimmfi: Winsock (Windows only) MUST be initialized before ANY
     // Winsock API call anywhere in this process -- including WSAPoll

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <chrono>
 #include <ctime>
 #include <vector>
 
@@ -1655,6 +1656,24 @@ int active() { return (g_nds_active == NDS_ARM9) ? 0 : 1; }
 
 // The AUXSPI backup-chip protocol itself lives in cart_backup.cpp so it can be
 // pinned by cart_backup_test; this only adds the write-through to disk.
+#if defined(__ANDROID__)
+// Android storage makes the desktop write-through ruinous: a flash save is
+// hundreds of small SPI transactions, and flushing the full 256 KiB image
+// synchronously on the emulation thread for each one collapses the frame
+// rate (observed: post-save fps drop + audio stutter). Debounce instead:
+// record dirty time here; nds_io_cartridge_save_maybe_flush() (called once
+// per presented frame) writes once the chip has been quiet for 500 ms. The
+// exit/power-off paths still flush unconditionally.
+static std::chrono::steady_clock::time_point g_cart_last_spi_write{};
+
+uint8_t cart_sram_spi_write(uint8_t val, uint32_t pos, bool last) {
+    const uint8_t result =
+        nds_cart_backup_spi_write(g_cart_backup, val, pos, last);
+    if (last && g_cart_backup.dirty)
+        g_cart_last_spi_write = std::chrono::steady_clock::now();
+    return result;
+}
+#else
 uint8_t cart_sram_spi_write(uint8_t val, uint32_t pos, bool last) {
     const uint8_t result =
         nds_cart_backup_spi_write(g_cart_backup, val, pos, last);
@@ -1662,6 +1681,7 @@ uint8_t cart_sram_spi_write(uint8_t val, uint32_t pos, bool last) {
         nds_io_flush_cartridge_save();
     return result;
 }
+#endif
 
 // IR-cartridge SPI front end (melonDS CartRetailIR::SPIWrite). Byte 0 of a
 // transfer is the IR command and answers 0; 0x00 passes the remainder through
@@ -1967,6 +1987,17 @@ void nds_io_configure_cartridge_save(
 void nds_io_set_cartridge_save_path(const char* path) {
     g_cart_save_path = path ? path : "";
 }
+
+#if defined(__ANDROID__)
+// Debounced companion to the flush below; see cart_sram_spi_write. External
+// linkage: called per presented frame from the frontend loop.
+void nds_io_cartridge_save_maybe_flush() {
+    if (!g_cart_backup.dirty || g_cart_save_path.empty()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - g_cart_last_spi_write > std::chrono::milliseconds(500))
+        nds_io_flush_cartridge_save();
+}
+#endif
 
 bool nds_io_flush_cartridge_save() {
     if (!g_cart_backup.dirty || g_cart_save_path.empty())
