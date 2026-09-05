@@ -1345,6 +1345,13 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
     }
     if (!audio)
         std::fprintf(stderr, "[sdl] audio unavailable: %s\n", SDL_GetError());
+    else
+        std::fprintf(stderr,
+            "[sdl] audio open: %d Hz, %u ch, callback %u frames, queue target "
+            "%u frames (%.0f ms)\n",
+            got.freq, static_cast<unsigned>(got.channels),
+            static_cast<unsigned>(got.samples), kAudioQueueFrames,
+            1000.0 * kAudioQueueFrames / got.freq);
 
     std::fprintf(stderr,
         "[sdl] controls: gamepad=Player 1 | bottom mouse=touch | "

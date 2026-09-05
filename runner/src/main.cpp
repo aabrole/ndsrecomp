@@ -326,13 +326,13 @@ int main(int argc, char** argv) {
         // Keep the emulation off the efficiency cores: this thread carries
         // the whole recompiled CPU pipeline, and letting the scheduler park
         // it on a little core shows up directly as frame dips. Restrict to
-        // the performance cluster (cpu3..cpu7 on the Thor's QCS8550; on
+        // the fastest cores only (cpu5..cpu7 on the Thor's QCS8550: 2x A715 + X3; on
         // other silicon an invalid mask simply fails and changes nothing).
         cpu_set_t mask;
         CPU_ZERO(&mask);
-        for (int cpu = 3; cpu <= 7; ++cpu) CPU_SET(cpu, &mask);
+        for (int cpu = 5; cpu <= 7; ++cpu) CPU_SET(cpu, &mask);
         if (sched_setaffinity(0, sizeof(mask), &mask) == 0)
-            std::fprintf(stderr, "[android] emu thread pinned to cpu3-7\n");
+            std::fprintf(stderr, "[android] emu thread pinned to cpu5-7\n");
         else
             std::fprintf(stderr, "[android] cpu affinity not applied\n");
     }
