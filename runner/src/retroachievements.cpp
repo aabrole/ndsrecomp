@@ -16,6 +16,7 @@
 extern "C" {
 #include "rc_client.h"
 #include "rc_consoles.h"
+#include "rc_hash.h"
 }
 
 namespace {
@@ -24,6 +25,7 @@ rc_client_t* g_client = nullptr;
 bool g_hardcore = false;
 std::string g_rom_path;
 std::string g_user;
+std::string g_hash_override;
 
 // Java bridge: MyGame class (global ref) + static method ids.
 jclass g_java_class = nullptr;
@@ -195,6 +197,8 @@ void RC_CCONV load_game_callback(int result, const char* error_message,
                   g_user.c_str(), summary.num_unlocked_achievements,
                   summary.num_core_achievements,
                   g_hardcore ? "  ·  hardcore" : "");
+    if (!g_hash_override.empty())
+        std::strncat(line, "  ·  hash override", sizeof(line) - std::strlen(line) - 1);
     status_line(line);
 }
 
@@ -211,6 +215,21 @@ void RC_CCONV login_callback(int result, const char* error_message,
         char line[128];
         std::snprintf(line, sizeof(line), "Logged in as %s", user->display_name);
         notify("RetroAchievements", line);
+    }
+    if (!g_hash_override.empty()) {
+        // Log the ROM's real hash first so the substitution is on record.
+        char real_hash[33] = {};
+        rc_hash_iterator_t iterator;
+        rc_hash_initialize_iterator(&iterator, g_rom_path.c_str(), nullptr, 0);
+        iterator.consoles[0] = RC_CONSOLE_NINTENDO_DS;
+        iterator.consoles[1] = 0;
+        if (rc_hash_generate(real_hash, RC_CONSOLE_NINTENDO_DS, &iterator))
+            std::fprintf(stderr, "[ra] ROM hash %s; reporting override %s "
+                         "(user-enabled)\n", real_hash, g_hash_override.c_str());
+        rc_hash_destroy_iterator(&iterator);
+        rc_client_begin_load_game(client, g_hash_override.c_str(),
+                                  load_game_callback, nullptr);
+        return;
     }
     rc_client_begin_identify_and_load_game(client, RC_CONSOLE_NINTENDO_DS,
                                            g_rom_path.c_str(), nullptr, 0,
@@ -258,6 +277,7 @@ bool nds_ra_init(const NdsRaOptions& options) {
     g_hardcore = options.hardcore;
     g_rom_path = options.rom_path;
     g_user = options.user;
+    g_hash_override = options.hash_override;
     rc_client_enable_logging(g_client, RC_CLIENT_LOG_LEVEL_INFO, log_message);
     rc_client_set_event_handler(g_client, event_handler);
     rc_client_set_hardcore_enabled(g_client, g_hardcore ? 1 : 0);

@@ -16,6 +16,9 @@ struct NdsRaOptions {
     std::string token;     // preferred; obtained from a previous login
     std::string password;  // used only when no token is stored yet
     std::string rom_path;  // hashed with rc_hash to identify the game
+    // Optional: report this hash to RA instead of the ROM's own (an
+    // opt-in the user enables knowingly; the real hash is still logged).
+    std::string hash_override;
 };
 
 bool nds_ra_init(const NdsRaOptions& options);

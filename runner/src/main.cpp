@@ -372,7 +372,7 @@ int main(int argc, char** argv) {
 
     std::string dir = "bios";
     std::string rom_path;
-    std::string ra_user, ra_token, ra_password, ra_hardcore;
+    std::string ra_user, ra_token, ra_password, ra_hardcore, ra_hash_override;
     std::string config_path = "game.toml";
     std::string cli_screen_layout;
     std::string cli_fullscreen;
@@ -534,6 +534,8 @@ int main(int argc, char** argv) {
             ra_password = argv[++i];
         } else if (a == "--ra-hardcore" && i + 1 < argc) {
             ra_hardcore = argv[++i];
+        } else if (a == "--ra-hash-override" && i + 1 < argc) {
+            ra_hash_override = argv[++i];
         } else if (a == "--mph-pad-aim-sensitivity" && i + 1 < argc) {
             cli_mph_pad_aim_sensitivity = argv[++i];
         } else if (a.rfind("--mph-pad-bind-", 0) == 0 && i + 1 < argc) {
@@ -988,6 +990,7 @@ int main(int argc, char** argv) {
     frontend_options.ra.password = ra_password;
     frontend_options.ra.hardcore = (ra_hardcore == "on");
     frontend_options.ra.rom_path = rom_path;
+    frontend_options.ra.hash_override = ra_hash_override;
     if (!cli_mph_pad_aim_sensitivity.empty() &&
         !nds_parse_mouse_sensitivity(
             cli_mph_pad_aim_sensitivity,
