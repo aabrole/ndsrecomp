@@ -397,6 +397,17 @@ set(NDS_RUNNER_SOURCES
 # identical -- only the target kind differs.
 if(ANDROID)
     list(APPEND NDS_RUNNER_SOURCES src/android_second_screen.cpp)
+    # RetroAchievements (rcheevos, MIT) for the Android build.
+    file(GLOB NDS_RCHEEVOS_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src/rcheevos/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src/rapi/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src/rhash/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src/rc_client.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src/rc_compat.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src/rc_util.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src/rc_version.c)
+    set_source_files_properties(${NDS_RCHEEVOS_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+    list(APPEND NDS_RUNNER_SOURCES ${NDS_RCHEEVOS_SOURCES} src/retroachievements.cpp)
     add_library(nds_runner SHARED ${NDS_RUNNER_SOURCES})
     set_target_properties(nds_runner PROPERTIES OUTPUT_NAME main)
     # main.cpp includes <SDL_main.h> under __ANDROID__, which renames main() to
@@ -582,6 +593,11 @@ endif()
 if(ANDROID AND TARGET SDL2)
     target_compile_definitions(nds_runner PRIVATE NDS_HAVE_SDL2=1)
     target_link_libraries(nds_runner PRIVATE SDL2 SDL2main log android)
+        target_include_directories(nds_runner PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/rcheevos/src)
+        target_compile_definitions(nds_runner PRIVATE
+            NDS_HAVE_RETROACHIEVEMENTS=1 RC_CLIENT_SUPPORTS_HASH=1 RC_DISABLE_LUA=1)
 else()
     find_package(SDL2 CONFIG QUIET)
     if(TARGET SDL2::SDL2)

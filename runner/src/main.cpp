@@ -372,6 +372,7 @@ int main(int argc, char** argv) {
 
     std::string dir = "bios";
     std::string rom_path;
+    std::string ra_user, ra_token, ra_password, ra_hardcore;
     std::string config_path = "game.toml";
     std::string cli_screen_layout;
     std::string cli_fullscreen;
@@ -525,6 +526,14 @@ int main(int argc, char** argv) {
             cli_mph_prime_unified_window_focus = argv[++i];
         } else if (a == "--mph-virtual-stylus-sensitivity" && i + 1 < argc) {
             cli_mph_virtual_stylus_sensitivity = argv[++i];
+        } else if (a == "--ra-user" && i + 1 < argc) {
+            ra_user = argv[++i];
+        } else if (a == "--ra-token" && i + 1 < argc) {
+            ra_token = argv[++i];
+        } else if (a == "--ra-password" && i + 1 < argc) {
+            ra_password = argv[++i];
+        } else if (a == "--ra-hardcore" && i + 1 < argc) {
+            ra_hardcore = argv[++i];
         } else if (a == "--mph-pad-aim-sensitivity" && i + 1 < argc) {
             cli_mph_pad_aim_sensitivity = argv[++i];
         } else if (a.rfind("--mph-pad-bind-", 0) == 0 && i + 1 < argc) {
@@ -973,6 +982,12 @@ int main(int argc, char** argv) {
                      "(expected 10..400)\n");
         return 2;
     }
+    frontend_options.ra.enabled = !ra_user.empty();
+    frontend_options.ra.user = ra_user;
+    frontend_options.ra.token = ra_token;
+    frontend_options.ra.password = ra_password;
+    frontend_options.ra.hardcore = (ra_hardcore == "on");
+    frontend_options.ra.rom_path = rom_path;
     if (!cli_mph_pad_aim_sensitivity.empty() &&
         !nds_parse_mouse_sensitivity(
             cli_mph_pad_aim_sensitivity,

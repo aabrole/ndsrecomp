@@ -1385,9 +1385,12 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
         }
         std::fprintf(stderr,
             "[sdl] MPH Prime Controls: melonPrimeDS bindings enabled; "
-            "virtual stylus sensitivity=%u%%\n",
+            "virtual stylus sensitivity=%u%% pad aim sensitivity=%u%% "
+            "invert-y=%s\n",
             static_cast<unsigned>(
-                options.mph_virtual_stylus_sensitivity));
+                options.mph_virtual_stylus_sensitivity),
+            static_cast<unsigned>(options.mph_pad_aim_sensitivity),
+            options.relative_mouse_invert_y ? "on" : "off");
     }
 
     SDL_GameController* controller = open_first_controller();
@@ -1593,6 +1596,8 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
     // screen to capture" gesture. Without this, sticks/buttons run the plain
     // fallback mapping until the player happens to tap the top screen.
     capture_relative_mouse();
+    if (nds_ra_init(options.ra))
+        std::fprintf(stderr, "[ra] client started\n");
 #endif
     uint64_t shown_frames = 0;
     uint64_t synthetic_presents = 0;
@@ -2176,6 +2181,10 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
                 turbo_pressed = true;
             else
                 turbo_pressed = false;
+#if defined(__ANDROID__)
+            // Hardcore RetroAchievements sessions forbid fast-forward.
+            if (nds_ra_hardcore_active()) turbo_pressed = false;
+#endif
 
             if (mph_prime_controls_available) {
                 // Right stick -> camera aim; triggers act as bindable
@@ -2521,6 +2530,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
         }
 
         ++shown_frames;
+#if defined(__ANDROID__)
+        nds_ra_frame();
+#endif
         ++fps_frames;
         g_live_stats.frames = shown_frames;
         g_live_stats.emu_ticks = phase_emu_ticks;
@@ -2585,6 +2597,9 @@ int nds_run_interactive_frontend(const NdsFrontendOptions& options) {
     const uint64_t top_hash = framebuffer_rgb_fnv(0);
     const uint64_t bottom_hash = framebuffer_rgb_fnv(1);
     if (audio) SDL_PauseAudioDevice(audio, 1);
+#if defined(__ANDROID__)
+    nds_ra_shutdown();
+#endif
     const uint64_t audio_underruns =
         audio_queue.underruns.load(std::memory_order_relaxed);
     if (audio) SDL_CloseAudioDevice(audio);

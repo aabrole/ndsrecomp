@@ -173,7 +173,10 @@ struct NdsMphPrimeControlBindings {
 // own dual-stick adaptation of its keyboard/mouse scheme.
 NdsMphPrimeControlBindings nds_default_mph_pad_bindings();
 
+#include "retroachievements.h"
+
 struct NdsFrontendOptions {
+    NdsRaOptions ra;  // RetroAchievements (Android)
     // Optional exact cartridge identity from [game]. When present, every
     // title-owned setting in this config is rejected for any other ROM.
     std::string expected_rom_sha1;
