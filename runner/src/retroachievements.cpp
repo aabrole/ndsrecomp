@@ -4,6 +4,7 @@
 #include "state.h"
 
 #include <jni.h>
+#include <android/log.h>
 #include <SDL.h>
 #include <SDL_system.h>
 
@@ -48,7 +49,10 @@ std::unordered_map<uint64_t, Pending> g_pending;
 std::vector<Response> g_responses;
 uint64_t g_next_id = 1;
 
+thread_local JNIEnv* t_browse_env = nullptr;
+
 JNIEnv* env_for_this_thread() {
+    if (t_browse_env) return t_browse_env;
     return static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
 }
 
@@ -265,6 +269,157 @@ Java_com_thor_mph_MyGame_nativeRaHttpResponse(JNIEnv* env, jclass, jlong id,
     }
     std::lock_guard<std::mutex> lk(g_mtx);
     g_responses.push_back(std::move(r));
+}
+
+// ---------------------------------------------------------------------------
+// Browse mode (settings screen): log in with the stored token, load the game,
+// and return the achievement list with the user's unlock state as JSON. Runs
+// a private client on the calling Java thread and pumps HTTP responses
+// itself; refuses to run while the in-game client is active.
+namespace {
+struct BrowseState {
+    int login_result = -1;
+    int load_result = -1;
+    bool login_done = false;
+    bool load_done = false;
+    std::string error;
+};
+
+void RC_CCONV browse_login_cb(int result, const char* msg, rc_client_t*, void* ud) {
+    auto* st = static_cast<BrowseState*>(ud);
+    st->login_result = result; st->login_done = true;
+    if (result != RC_OK && msg) st->error = msg;
+}
+void RC_CCONV browse_load_cb(int result, const char* msg, rc_client_t*, void* ud) {
+    auto* st = static_cast<BrowseState*>(ud);
+    st->load_result = result; st->load_done = true;
+    if (result != RC_OK && msg) st->error = msg;
+}
+void RC_CCONV browse_event(const rc_client_event_t*, rc_client_t*) {}
+
+void pump_responses_once() {
+    std::vector<Response> ready;
+    {
+        std::lock_guard<std::mutex> lk(g_mtx);
+        ready.swap(g_responses);
+    }
+    for (Response& r : ready) {
+        Pending p{};
+        {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            auto it = g_pending.find(r.id);
+            if (it == g_pending.end()) continue;
+            p = it->second;
+            g_pending.erase(it);
+        }
+        rc_api_server_response_t resp{};
+        resp.body = r.body.data();
+        resp.body_length = r.body.size();
+        resp.http_status_code = r.status;
+        p.callback(&resp, p.callback_data);
+    }
+}
+
+bool pump_until(rc_client_t* client, const bool& flag, int timeout_ms) {
+    for (int waited = 0; !flag && waited < timeout_ms; waited += 20) {
+        pump_responses_once();
+        rc_client_idle(client);
+        SDL_Delay(20);
+    }
+    return flag;
+}
+
+void json_escape(std::string& out, const char* v) {
+    out += '"';
+    for (const char* c = v ? v : ""; *c; ++c) {
+        switch (*c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        default:
+            if (static_cast<unsigned char>(*c) < 0x20) out += ' ';
+            else out += *c;
+        }
+    }
+    out += '"';
+}
+}  // namespace
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_thor_mph_SettingsActivity_nativeRaBrowse(JNIEnv* env, jclass,
+                                                  jstring juser, jstring jtoken,
+                                                  jstring jrom, jstring joverride) {
+    if (g_client) return env->NewStringUTF("{\"error\":\"close the game first\"}");
+    const char* user = env->GetStringUTFChars(juser, nullptr);
+    const char* token = env->GetStringUTFChars(jtoken, nullptr);
+    const char* rom = env->GetStringUTFChars(jrom, nullptr);
+    const char* over = joverride ? env->GetStringUTFChars(joverride, nullptr) : nullptr;
+    t_browse_env = env;
+    std::string out;
+    rc_client_t* client = rc_client_create(read_memory, server_call);
+    BrowseState st;
+    if (!client) {
+        out = "{\"error\":\"client\"}";
+    } else {
+        rc_client_set_event_handler(client, browse_event);
+        rc_client_set_hardcore_enabled(client, 0);
+        rc_client_begin_login_with_token(client, user, token, browse_login_cb, &st);
+        if (!pump_until(client, st.login_done, 20000) || st.login_result != RC_OK) {
+            out = "{\"error\":"; json_escape(out, st.error.empty() ? "login timed out" : st.error.c_str()); out += "}";
+        } else {
+            if (over && *over)
+                rc_client_begin_load_game(client, over, browse_load_cb, &st);
+            else
+                rc_client_begin_identify_and_load_game(client, RC_CONSOLE_NINTENDO_DS,
+                                                       rom, nullptr, 0, browse_load_cb, &st);
+            if (!pump_until(client, st.load_done, 30000) || st.load_result != RC_OK) {
+                out = "{\"error\":"; json_escape(out, st.load_result == RC_NO_GAME_LOADED
+                    ? "game not recognized (hash not linked on RA)"
+                    : (st.error.empty() ? "load timed out" : st.error.c_str())); out += "}";
+            } else {
+                const rc_client_game_t* game = rc_client_get_game_info(client);
+                rc_client_user_game_summary_t sum{};
+                rc_client_get_user_game_summary(client, &sum);
+                out = "{\"game\":"; json_escape(out, game ? game->title : "");
+                out += ",\"unlocked\":" + std::to_string(sum.num_unlocked_achievements);
+                out += ",\"total\":" + std::to_string(sum.num_core_achievements);
+                out += ",\"points\":" + std::to_string(sum.points_unlocked);
+                out += ",\"achievements\":[";
+                rc_client_achievement_list_t* list = rc_client_create_achievement_list(
+                    client, RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE,
+                    RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_LOCK_STATE);
+                bool first = true;
+                for (uint32_t b = 0; list && b < list->num_buckets; ++b) {
+                    const rc_client_achievement_bucket_t& bk = list->buckets[b];
+                    for (uint32_t i = 0; i < bk.num_achievements; ++i) {
+                        const rc_client_achievement_t* a = bk.achievements[i];
+                        char url[256] = {};
+                        rc_client_achievement_get_image_url(a, a->state, url, sizeof(url));
+                        if (!first) out += ',';
+                        first = false;
+                        out += "{\"title\":"; json_escape(out, a->title);
+                        out += ",\"description\":"; json_escape(out, a->description);
+                        out += ",\"points\":" + std::to_string(a->points);
+                        out += ",\"unlocked\":" + std::string(a->state == RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED ? "true" : "false");
+                        out += ",\"unlock_time\":" + std::to_string(static_cast<long long>(a->unlock_time));
+                        out += ",\"bucket\":"; json_escape(out, bk.label);
+                        out += ",\"badge\":"; json_escape(out, url);
+                        out += "}";
+                    }
+                }
+                if (list) rc_client_destroy_achievement_list(list);
+                out += "]}";
+            }
+        }
+        rc_client_destroy(client);
+    }
+    t_browse_env = nullptr;
+    env->ReleaseStringUTFChars(juser, user);
+    env->ReleaseStringUTFChars(jtoken, token);
+    env->ReleaseStringUTFChars(jrom, rom);
+    if (over) env->ReleaseStringUTFChars(joverride, over);
+    __android_log_print(ANDROID_LOG_INFO, "ThorMPH", "RA browse: %zu bytes", out.size());
+    return env->NewStringUTF(out.c_str());
 }
 
 bool nds_ra_init(const NdsRaOptions& options) {
