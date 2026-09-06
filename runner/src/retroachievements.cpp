@@ -30,6 +30,7 @@ jclass g_java_class = nullptr;
 jmethodID g_m_http = nullptr;   // raHttpRequest(long, String, String, String)
 jmethodID g_m_notify = nullptr; // raNotify(String, String)
 jmethodID g_m_token = nullptr;  // raStoreToken(String, String)
+jmethodID g_m_status = nullptr; // raStatus(String)
 
 struct Pending {
     rc_client_server_callback_t callback;
@@ -58,6 +59,14 @@ void notify(const char* title, const char* body) {
     env->CallStaticVoidMethod(g_java_class, g_m_notify, jt, jb);
     env->DeleteLocalRef(jt);
     env->DeleteLocalRef(jb);
+}
+
+void status_line(const char* line) {
+    JNIEnv* env = env_for_this_thread();
+    if (!env || !g_java_class || !g_m_status) return;
+    jstring js = env->NewStringUTF(line ? line : "");
+    env->CallStaticVoidMethod(g_java_class, g_m_status, js);
+    env->DeleteLocalRef(js);
 }
 
 void store_token(const char* user, const char* token) {
@@ -128,6 +137,15 @@ void RC_CCONV event_handler(const rc_client_event_t* event, rc_client_t*) {
                       event->achievement->title, event->achievement->points,
                       event->achievement->description);
         notify("Achievement unlocked", line);
+        {
+            rc_client_user_game_summary_t summary{};
+            rc_client_get_user_game_summary(g_client, &summary);
+            std::snprintf(line, sizeof(line), "RA  %s  ·  %u / %u achievements%s",
+                          g_user.c_str(), summary.num_unlocked_achievements,
+                          summary.num_core_achievements,
+                          g_hardcore ? "  ·  hardcore" : "");
+            status_line(line);
+        }
         break;
     case RC_CLIENT_EVENT_GAME_COMPLETED:
         notify("Game mastered", "Every achievement earned.");
@@ -158,6 +176,9 @@ void RC_CCONV load_game_callback(int result, const char* error_message,
         notify(result == RC_NO_GAME_LOADED ? "RetroAchievements: game not recognized"
                                           : "RetroAchievements: load failed",
                line);
+        status_line(result == RC_NO_GAME_LOADED
+            ? "RA: this ROM hash is not linked on retroachievements.org"
+            : "RA: game load failed");
         return;
     }
     const rc_client_game_t* game = rc_client_get_game_info(client);
@@ -170,6 +191,11 @@ void RC_CCONV load_game_callback(int result, const char* error_message,
                   summary.num_core_achievements,
                   g_hardcore ? " (hardcore)" : "");
     notify("RetroAchievements ready", line);
+    std::snprintf(line, sizeof(line), "RA  %s  ·  %u / %u achievements%s",
+                  g_user.c_str(), summary.num_unlocked_achievements,
+                  summary.num_core_achievements,
+                  g_hardcore ? "  ·  hardcore" : "");
+    status_line(line);
 }
 
 void RC_CCONV login_callback(int result, const char* error_message,
@@ -204,6 +230,7 @@ Java_com_thor_mph_MyGame_nativeRaBind(JNIEnv* env, jclass cls) {
         cls, "raNotify", "(Ljava/lang/String;Ljava/lang/String;)V");
     g_m_token = env->GetStaticMethodID(
         cls, "raStoreToken", "(Ljava/lang/String;Ljava/lang/String;)V");
+    g_m_status = env->GetStaticMethodID(cls, "raStatus", "(Ljava/lang/String;)V");
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
